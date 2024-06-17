@@ -1,0 +1,10 @@
+[package]
+name = "bz_player"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.27.0"
+ratatui = "0.26.3"
+rodio = "0.18.1"
+rusqlite = { version = "0.31.0", features = ["bundled", "functions"] }
