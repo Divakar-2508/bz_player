@@ -1,9 +1,8 @@
 use std::{
     io::{self, stdout, Stdout},
-    sync::mpsc::{Receiver, Sender}
+    sync::mpsc::{self, Receiver}
 };
-
-use crate::dj::Dj;
+use crate::{player::{Player, PlayerAction}, song_base::SongBase};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
@@ -28,28 +27,90 @@ pub fn restore() -> io::Result<()> {
     Ok(())
 }
 
+enum AppActions {
+    Add(String),
+    Play,
+    Pause,
+    NextSong,
+    PrevSong,
+    Fetch(Option<String>),
+    Jump(i32),
+    Invalid,
+    Empty,
+    Exit
+}
+
+impl AppActions {
+    fn parse_command(command: &str) -> Self {
+        let command_splitted: Vec<&str> = command.split_whitespace().collect();
+        if command_splitted.is_empty() {
+            return AppActions::Empty;
+        }
+
+        let main_command = command_splitted.get(0).unwrap().trim().to_lowercase();
+        match main_command.as_str() {
+            "add" | "pour" => {
+                let song_name = command_splitted.get(0);
+                if song_name.is_none() {
+                    AppActions::Add("*".to_string())
+                } else {
+                    AppActions::Add(song_name.unwrap().to_owned().to_string())
+                }
+            },
+            "play" | "p" => AppActions::Play,
+            "next" | "skip" => AppActions::NextSong,
+            "pause" | "wait" => AppActions::Pause,
+            "fetch" | "scan" => {
+                let path = command_splitted.get(1);
+                if let Some(path) = path {
+                    AppActions::Fetch(Some(path.to_owned().to_string()))
+                } else {
+                    AppActions::Fetch(None)
+                }
+            },
+            "prev" | "back" | "rollback" => AppActions::PrevSong,
+            "jump" => {
+                let song_index = command_splitted.get(1);
+                if song_index.is_none() {
+                    return AppActions::Jump(-1);
+                } 
+                let song_index = song_index.unwrap().parse::<i32>();
+                if song_index.is_err() {
+                    return AppActions::Jump(-1);
+                }
+                return AppActions::Jump(song_index.unwrap());
+            },
+            "exit" | "quit" | "out" => AppActions::Exit, 
+            _ => AppActions::Invalid,
+        }
+    }
+}
+
 pub struct App {
     exit: bool,
     command: String,
     info: Vec<String>,
-    player: Dj,
-    info_reciever: Receiver<String>,
+    player: Player,
     system_log: Vec<String>,
-    spl_sender: Sender<u8>
+    receiver: Receiver<PlayerAction>,
+    song_base: SongBase
 }
 
 impl App {
     pub fn new() -> App {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (spl_tx, spl_rx) = std::sync::mpsc::channel();
+        let (sender, receiver) = mpsc::channel();
+        let sender_clone = sender.clone();
+        let player = Player::new(sender);
+
+        let song_base = SongBase::new("song.db", sender_clone).unwrap();
         App {
             exit: false,
             command: String::new(),
             info: Vec::new(),
-            player: Dj::new(tx, spl_rx),
-            info_reciever: rx,
+            player,
             system_log: Vec::new(),
-            spl_sender: spl_tx,
+            receiver,
+            song_base
         }
     }
 
@@ -59,24 +120,11 @@ impl App {
         while !self.exit {
             terminal.draw(|frame| self.render_frame(frame))?;
             self.handle_events()?;
-            let recv = self.info_reciever.try_recv();
-            if let Ok(message) = recv {
-                let message = message.trim().to_owned();
-                if message.starts_with("105") {
-                    self.log_info(message);
-                } else if message.starts_with("101") {
-                    self.log_info("Message Recieved".to_string());
-                    let (_, message) = message.split_at(3);
-                    if message.trim() == "Done" {
-                        if self.player.len() > self.player.current_index as usize {
-                            self.player.skip_track();
-                            self.log_info("skippedd".to_string());
-                        } else {
-                            self.log_info("At Queue End, You there Buddy?!".to_string());
-                        }
-                    }
-                } else {
-                    self.log_system(message);
+            let message = self.receiver.try_recv();
+            if let Ok(message) = message {
+                match message {
+                    PlayerAction::ConnectionMessage(msg) => self.log_system(msg),
+                    _ => (),
                 }
             }
         }
@@ -109,68 +157,54 @@ impl App {
     }
 
     fn handle_command(&mut self) {
-        let command = self.command.trim().to_lowercase();
-        let command_vec = command.split_whitespace().collect::<Vec<&str>>();
-        if command_vec.is_empty() {
-            self.log_info("Empty Command ><".to_string());
-            return;
-        }
-        let main_command = command_vec.get(0).unwrap().trim();
-        match main_command {
-            "quit" | "exit" | "break" => self.exit = true,
-            "add" => {
-                let song_name = command_vec.get(1..).unwrap().join(" ");
-                if song_name.trim().is_empty() {
-                    self.log_info("Specify a Song Dooood".to_string());
+        let command = AppActions::parse_command(&self.command);
+        match command {
+            AppActions::Add(song_name) => {
+                if song_name == "*" {
+                    self.log_info("Specify Song Name".to_string())
                 } else {
-                    let add_result = self.player.add_track(&song_name);
-                    self.info.push(add_result);
-                }
-                self.spl_sender.send(1).unwrap();
-            }
-            "resume" | "play" if command_vec.get(1).is_none() => {
-                let play_result = self.player.play(false);
-                self.log_info(play_result);
-            }
-            "play" | "jump"=> {
-                let index = command_vec.get(1);
-                if index.is_none() {
-                    self.player.play(false);
-                    self.log_info("Resumed!".to_string());
-                } else {
-                    let index = index.unwrap().parse::<usize>();
-                    if index.is_err() {
-                        self.log_info("Duh! Get the Index Right".to_string());
-                    } else {
-                        self.info.push(self.player.jump_song(index.unwrap()))
+                    let song = self.song_base.get_song(song_name);
+                    match song {
+                        Err(err) => self.log_info(err),
+                        Ok(song) => {
+                            let song_name = song.song_name.clone();
+                            match self.player.add_track(song) {
+                                Ok(index) => self.log_info(format!("Added {} to queue @ {}", song_name, index)),
+                                Err(err) => self.log_info(err),
+                            }
+                        },
                     }
                 }
+            }
+            AppActions::Play => {
+                let play_result = self.player.play(false);
+                
+                // self.
             },
-            "p" => self.player.pause_play(),
-            "next" | "skip" => {
-                let result = self.player.skip_track();
-                self.log_info(result);
+            AppActions::Empty => {
+
             }
-            "pause" | "wait" | "hold" => {
-                self.player.pause();
-                self.log_info("Paused For Ya!".to_string())
-            }
-            "hello" | "hi" | "yo" => {
-                self.log_info("Yoo Wassup (★ ω ★)".to_string());
-            }
-            "prev" | "back" | "revert" => {
-                let result = self.player.prev_track();
-                self.log_info(result);
-            }
-            "scan" | "fetch" => {
-                self.player.scan_songs(command_vec.get(1));
+            AppActions::Pause => todo!(),
+            AppActions::NextSong => todo!(),
+            AppActions::PrevSong => todo!(),
+            AppActions::Fetch(path) => {
+                let return_value = self.song_base.scan_songs(path);
+                let log_info = return_value.map(|s| format!("Searching {}", s))
+                    .map_err(|err| err.to_string()).unwrap();
+                self.log_info(log_info);
             },
-            other => self.log_info(format!("{}? What's that tho 😕", other)),
+            AppActions::Jump(_) => todo!(),
+            AppActions::Exit => {
+                self.log_info("See Ya! Have a Great Time");
+                self.exit = true;
+            },
+            AppActions::Invalid => self.log_info("Can't dEcIpHeR that, check out Top Right ↗️"),
         }
         self.command.clear();
     }
 
-    fn log_info(&mut self, message: String) {
+    fn log_info<S: ToString>(&mut self, message: S) {
+        let message = message.to_string();
         if self.info.len() >= 9 {
             self.info.remove(0);
         }
