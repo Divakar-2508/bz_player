@@ -50,7 +50,7 @@ impl AppActions {
         let main_command = command_splitted.get(0).unwrap().trim().to_lowercase();
         match main_command.as_str() {
             "add" | "pour" => {
-                let song_name = command_splitted.get(0);
+                let song_name = command_splitted.get(1);
                 if song_name.is_none() {
                     AppActions::Add("*".to_string())
                 } else {
@@ -127,6 +127,12 @@ impl App {
                     _ => (),
                 }
             }
+            if self.player.is_empty() {
+                match self.player.next_track() {
+                    Ok(index) => self.log_info(format!("Now Playing: {}", self.player.get_song_detail(index).unwrap())),
+                    _ => (),
+                }
+            }
         }
         Ok(())
     }
@@ -169,7 +175,7 @@ impl App {
                         Ok(song) => {
                             let song_name = song.song_name.clone();
                             match self.player.add_track(song) {
-                                Ok(index) => self.log_info(format!("Added {} to queue @ {}", song_name, index)),
+                                Ok(index) => self.log_info(format!("Added {} to queue @ {}", song_name, index + 1)),
                                 Err(err) => self.log_info(err),
                             }
                         },
@@ -185,7 +191,17 @@ impl App {
 
             }
             AppActions::Pause => todo!(),
-            AppActions::NextSong => todo!(),
+            AppActions::NextSong => {
+                match self.player.next_track() {
+                    Ok(index) => {
+                        let next_track_log = self.player.get_song_detail(index)
+                            .map(|song_name| format!("Skipped Track, Now Playing: {}", song_name))
+                            .unwrap();
+                        self.log_info(next_track_log);
+                    },
+                    Err(err) => self.log_info(err)
+                }
+            },
             AppActions::PrevSong => todo!(),
             AppActions::Fetch(path) => {
                 let return_value = self.song_base.scan_songs(path);
@@ -281,7 +297,7 @@ impl Widget for &App {
             .iter()
             .enumerate()
             .map(|(index, song_name)| {
-                if index == self.player.current_song() as usize - 1 {
+                if index == self.player.current_song() as usize {
                     Line::from(format!("{}. {}", index + 1, song_name)).fg(Color::Green)
                 } else {
                     Line::from(format!("{}. {}", index + 1, song_name))

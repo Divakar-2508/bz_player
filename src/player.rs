@@ -41,7 +41,7 @@ impl Player {
 
         let sender_clone = sender.clone();
         let playback_handle = thread::spawn(move || {
-            Self::handle_playback(sink_clone, sender_clone);
+            // Self::handle_playback(sink_clone, sender_clone);
         });
         let player = Self {
             queue,
@@ -57,7 +57,7 @@ impl Player {
     pub fn add_track(&mut self, song: Song) -> Result<u32, PlayerError> {
         self.queue.push(song);
         if self.sink.lock().unwrap().empty() {
-            self.play(true);
+            self.play(true)?;
         }
         Ok(self.current_song)
     }
@@ -71,6 +71,7 @@ impl Player {
             let song = self.queue.iter().nth(self.current_song as usize).unwrap();
             sink.clear();
             sink.append(song.get_source().unwrap());
+            sink.play();
         } else {
             sink.play();
         }
@@ -82,6 +83,7 @@ impl Player {
             Err(PlayerError::IndexOutOfBounds)
         } else {
             self.current_song += 1;
+            self.play(true)?;
             Ok(self.current_song)
         }
     }
@@ -107,18 +109,22 @@ impl Player {
         self.current_song
     }
 
-    fn handle_playback(sink: Arc<Mutex<Sink>>, sender: Sender<PlayerAction>) {
-        loop {
-            thread::park();
-            loop {
-                thread::sleep(Duration::from_secs_f32(0.5));
-                let sink = sink.lock().unwrap();
-                if sink.empty() {
-                    sink.skip_one();
-                    sender.send(PlayerAction::NextSong).unwrap();
-                    break;
-                }
-            }
-        }
+    pub fn is_empty(&self) -> bool {
+        self.sink.lock().unwrap().empty()
     }
+
+    // fn handle_playback(sink: Arc<Mutex<Sink>>, sender: Sender<PlayerAction>) {
+    //     loop {
+    //         thread::park();
+    //         loop {
+    //             thread::sleep(Duration::from_secs_f32(0.5));
+    //             let sink = sink.lock().unwrap();
+    //             if sink.empty() {
+    //                 sink.skip_one();
+    //                 sender.send(PlayerAction::NextSong).unwrap();
+    //                 break;
+    //             }
+    //         }
+    //     }
+    // }
 }

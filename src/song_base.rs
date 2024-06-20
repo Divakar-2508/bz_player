@@ -1,5 +1,5 @@
 use std::{
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{mpsc::Sender, Arc, Mutex},
     thread,
 };
@@ -43,18 +43,33 @@ impl SongBase {
     }
 
     pub fn get_song(&self, song_name: String) -> Result<Song, SongBaseError> {
-        let connection = self.conn.lock().unwrap();
-        let get_statement = "SELECT song_name, song_path from songs WHERE song_name LIKE ?1";
-
         let pattern = format!("%{}%", song_name);
-        
-        let song = connection.query_row(&get_statement, [pattern], |row| {
-            let song_name: String = row.get("song_name")?;
-            let song_path: String = row.get("song_path")?;
-            Ok(Song::new(song_name, song_path))
-        }).map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+        // self.sender.send(Pla)
+        let binding = self
+            .conn
+            .lock()
+            .unwrap();
 
-        song.map_err(|err| SongBaseError::SongError(err))
+        let mut fetch_query = binding
+            .prepare(
+                "SELECT * FROM songs WHERE 
+            song_name LIKE ?1",
+            )
+            .unwrap();
+
+        //Contains all result
+        let mut fetch_result = fetch_query.query([pattern])
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        //get the first row
+        let best_match = fetch_result.next()
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?
+            .ok_or(SongBaseError::EntryNotFound)?;
+     
+        let song_name: String = best_match.get("song_name").unwrap();
+        let song_path: String = best_match.get("song_path").unwrap();
+
+        Ok(Song::new(song_name, song_path).unwrap())
     }
 
     // pub fn get_playlist(&self, playlist_name: String) -> Vec<Song> {
