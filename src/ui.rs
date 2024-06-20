@@ -334,5 +334,49 @@ impl Widget for &App {
             .alignment(Alignment::Left)
             .wrap(Wrap { trim: true });
         info_para.render(info_area, buf);
+
+        let right_layout = Layout::default()
+            .constraints([Constraint::Fill(1), Constraint::Fill(1)])
+            .split(upper_layout[2]);
+
+        //Playlist Box - Right Top
+        let playlist_box = Block::default()
+            .title(" Playlist ".fg(Color::Red))
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::White));
+
+        let playlist_area = right_layout[0];
+
+        let playlist_para = Paragraph::new("1. Baka Baka")
+            .block(playlist_box)
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true });
+
+        playlist_para.render(playlist_area, buf);
+
+        //System LogBox - Right Bottom
+        let log_box = Block::default()
+            .title(" System Log ".fg(Color::Red))
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::White));
+
+        let log_area = right_layout[1];
+
+        let log_lines: Vec<Line> = self
+            .system_log
+            .iter()
+            .map(|x| Line::raw(x).fg(Color::White))
+            .collect();
+
+        let log_para = Paragraph::new(log_lines)
+            .block(log_box)
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: true });
+
+        log_para.render(log_area, buf);
     }
 }
