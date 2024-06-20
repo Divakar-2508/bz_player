@@ -175,7 +175,7 @@ impl App {
                         Ok(song) => {
                             let song_name = song.song_name.clone();
                             match self.player.add_track(song) {
-                                Ok(index) => self.log_info(format!("Added {} to queue @ {}", song_name, index + 1)),
+                                Ok(index) => self.log_info(format!("Added {} to queue @ {}", song_name, index)),
                                 Err(err) => self.log_info(err),
                             }
                         },
@@ -277,12 +277,11 @@ impl Widget for &App {
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Fill(1),
-                Constraint::Fill(1),
-                Constraint::Fill(1),
+                Constraint::Fill(3),
             ])
             .split(main_layout[0]);
 
-        //Queue Box - Left InnerLayout
+        //Queue Box - Left Full
         let queue_block = Block::default()
             .title(" Play Queue ".fg(Color::Red))
             .title_alignment(Alignment::Center)
@@ -310,30 +309,12 @@ impl Widget for &App {
             .wrap(Wrap { trim: true });
         queue_para.render(queue_area, buf);
 
-        let middle_layout = Layout::default()
+        let right_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(12), Constraint::Fill(1)])
             .split(upper_layout[1]);
 
-        //thanush Box - middle Top
-        let thanush_box = Block::default()
-            .title(" Thanush ".fg(Color::Red))
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::White));
-
-        let thanush_area = middle_layout[0];
-
-        let thanush_lines: Vec<Line> = (0..10).map(|_| Line::raw("Thanush")).collect();
-        let thanush_para = Paragraph::new(thanush_lines)
-            .block(thanush_box)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
-
-        thanush_para.render(thanush_area, buf);
-
-        //Info Box - Middle Bottom
+        //Info Box - right Bottom
         let info_box = Block::default()
             .title(" Info ".fg(Color::Red))
             .borders(Borders::ALL)
@@ -341,7 +322,7 @@ impl Widget for &App {
             .border_style(Style::default().fg(Color::White))
             .title_alignment(Alignment::Center);
 
-        let info_area = middle_layout[1];
+        let info_area = right_layout[1];
         let info_lines: Vec<Line> = self
             .info
             .iter()
@@ -353,49 +334,5 @@ impl Widget for &App {
             .alignment(Alignment::Left)
             .wrap(Wrap { trim: true });
         info_para.render(info_area, buf);
-
-        let right_layout = Layout::default()
-            .constraints([Constraint::Fill(1), Constraint::Fill(1)])
-            .split(upper_layout[2]);
-
-        //Playlist Box - Right Top
-        let playlist_box = Block::default()
-            .title(" Playlist ".fg(Color::Red))
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::White));
-
-        let playlist_area = right_layout[0];
-
-        let playlist_para = Paragraph::new("1. Baka Baka")
-            .block(playlist_box)
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true });
-
-        playlist_para.render(playlist_area, buf);
-
-        //System LogBox - Right Bottom
-        let log_box = Block::default()
-            .title(" System Log ".fg(Color::Red))
-            .title_alignment(Alignment::Center)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::White));
-
-        let log_area = right_layout[1];
-
-        let log_lines: Vec<Line> = self
-            .system_log
-            .iter()
-            .map(|x| Line::raw(x).fg(Color::White))
-            .collect();
-
-        let log_para = Paragraph::new(log_lines)
-            .block(log_box)
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: true });
-
-        log_para.render(log_area, buf);
     }
 }
