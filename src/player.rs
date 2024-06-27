@@ -1,7 +1,7 @@
 use std::{fmt::Display, sync::mpsc::Sender};
 use rodio::{self, OutputStream, Sink};
 use crate::error::PlayerError;
-use crate::song::Song;
+use crate::song::{Playlist, Song};
 
 pub struct Player {
     queue: Vec<Song>,
@@ -13,7 +13,6 @@ pub struct Player {
 
 #[derive(Debug)]
 pub enum PlayerAction {
-    NextSong,
     ConnectionMessage(String),
 }
 
@@ -21,7 +20,6 @@ impl Display for PlayerAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ConnectionMessage(message) => write!(f, "{}", message),
-            Self::NextSong => write!(f, "Skipped"),
         }
     }
 }
@@ -46,6 +44,14 @@ impl Player {
 
     pub fn add_track(&mut self, song: Song) -> Result<u32, PlayerError> {
         self.queue.push(song);
+        if self.sink.empty() {
+            self.play(true)?;
+        }
+        Ok(self.queue.len() as u32)
+    }
+
+    pub fn add_playlist(&mut self,mut playlist: Playlist) -> Result<u32, PlayerError> {
+        self.queue.append(&mut playlist.songs);
         if self.sink.empty() {
             self.play(true)?;
         }
@@ -77,8 +83,19 @@ impl Player {
         }
     }
 
-    pub fn get_song_detail(&self, index: u32) -> Result<String, PlayerError> {
-        let index = (index - 1) as usize;
+    pub fn pause(&self) {
+        self.sink.pause();
+    }
+
+    pub fn jump_track(&mut self, index: usize) -> Result<u32, PlayerError> {
+        if index as usize >= self.queue.len() {
+            return Err(PlayerError::IndexOutOfBounds);
+        }
+        self.current_song = index as u32;
+        self.play(true)
+    }
+
+    pub fn get_song_detail(&self, index: usize) -> Result<String, PlayerError> {
         if index >= self.queue.len() {
             Err(PlayerError::IndexOutOfBounds)
         } else {

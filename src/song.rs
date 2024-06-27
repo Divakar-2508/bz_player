@@ -5,13 +5,45 @@ use rodio::Decoder;
 use crate::error::SongError;
 
 #[derive(Debug)]
+pub enum Playable {
+    Song(String),
+    Playlist(u8),
+    None,
+    Whole
+}
+
+impl std::fmt::Display for PlaylistActions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlaylistActions::Show => write!(f, "Playlist Show"),
+            PlaylistActions::View(playlist_id) => write!(f, "Playlist View {:?}", playlist_id),
+            PlaylistActions::Create(playlist_name) => write!(f, "Playlist Create {:?}", playlist_name),
+            PlaylistActions::Add(id, songs) => write!(f, "Playlist Add {:?} {:?}", id, songs),
+            PlaylistActions::AddAll => write!(f, "Playlist add *"),
+            PlaylistActions::Invalid => write!(f, "Playlist Invalid"),
+        }
+    }
+}
+
+
+pub enum PlaylistActions {
+    Show,
+    View(Option<u8>),
+    Create(Option<String>),
+    Add(u8, Option<Vec<String>>),
+    AddAll,
+    Invalid,
+}
+
+#[derive(Debug)]
 pub struct Song {
+    pub song_id: u32,
     pub song_name: String,
     pub song_path: PathBuf,
 }
 
 impl Song {
-    pub fn new<S: AsRef<str> + ToString>(song_name: S, song_path: S) -> Result<Self, SongError> {
+    pub fn new<S: AsRef<str> + ToString>(id: u32, song_name: S, song_path: S) -> Result<Self, SongError> {
         let path_check = PathBuf::from(song_path.as_ref());
         if !path_check.exists() {
             return Err(SongError::InvalidSongPath);
@@ -22,6 +54,7 @@ impl Song {
         }
 
         Ok(Self {
+            song_id: id,
             song_name: song_name.to_string(),
             song_path: path_check,
         })
@@ -37,22 +70,29 @@ impl Song {
         Ok(Decoder::new(reader).unwrap())
     }
 
-    pub fn return_values(&self) -> (&str, &str) {
-        (&self.song_name, &self.song_path.to_str().unwrap())
-    }
-
-    pub fn get_path(&self) -> PathBuf {
-        self.song_path.clone()
-    }
-
     fn is_valid_song_path(path: &Path) -> bool {
-        let extension = path.extension();
-        if extension.is_none() {
-            return false;
-        }   
-        match extension.unwrap().to_string_lossy().to_lowercase().as_str() {
-            "mp3" | "ogg" | "wav" => true,
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("mp3") | Some("ogg") | Some("wav") => true,
             _ => false,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Playlist {
+    pub playlist_name: String,
+    pub songs: Vec<Song>
+}
+
+impl Playlist {
+    pub fn new<S: ToString>(playlist_name: S) -> Self {
+        Self {
+            playlist_name: playlist_name.to_string(),
+            songs: Vec::new()
+        }
+    }
+
+    pub fn add_song(&mut self, song: Song) {
+        self.songs.push(song)
     }
 }

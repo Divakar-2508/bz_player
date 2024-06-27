@@ -4,8 +4,12 @@ use std::{
     thread,
 };
 
-use crate::{error::SongBaseError, player::PlayerAction, song::Song};
-use rusqlite::{Connection, ErrorCode};
+use crate::{
+    error::{SongBaseError, SongError},
+    player::PlayerAction,
+    song::{Playlist, Song},
+};
+use rusqlite::{Connection, Error as rusqliteError, ErrorCode};
 
 pub struct SongBase {
     conn: Arc<Mutex<Connection>>,
@@ -13,42 +17,54 @@ pub struct SongBase {
 }
 
 impl SongBase {
-    pub fn new(db_name: &str, sender: Sender<PlayerAction>) -> Result<Self, String> {
-        let conn = Connection::open(db_name);
-        if let Err(conn) = conn.as_ref() {
-            if conn.sqlite_error_code() == Some(ErrorCode::CannotOpen) {
-                return Err("Can't Open the Database".to_string());
+    pub fn new(db_name: &str, sender: Sender<PlayerAction>) -> Result<Self, SongBaseError> {
+        let conn = Connection::open(db_name).map_err(|err| {
+            if err.sqlite_error_code() == Some(ErrorCode::CannotOpen) {
+                SongBaseError::AccessFailed
+            } else {
+                SongBaseError::DatabaseError(err.to_string())
             }
-        }
+        })?;
 
-        let conn = conn.unwrap();
-
-        let create_table_songs = conn.execute(
+        conn.execute(
             "CREATE TABLE IF NOT EXISTS songs(
-                song_name TEXT PRIMARY KEY NOT NULL,
+                song_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                song_name TEXT UNIQUE NOT NULL,
                 song_path TEXT NOT NULL
             )",
             (),
-        );
+        )
+        .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
-        // let create_table_playlist = conn.execute(
-        //     "CREATE TABLE playlists
-        //     playlist_id ", params)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS playlists(
+                playlist_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                playlist_name TEXT UNQIUE NOT NULL
+            )",
+            (),
+        )
+        .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS playlist_song_link(
+                playlist_id INTEGER,
+                song_id INTEGER,
+                PRIMARY KEY (playlist_id, song_id),
+                FOREIGN KEY (playlist_id) REFERENCES playlists(playlist_id) ON DELETE CASCADE,
+                FOREIGN KEY (song_id) REFERENCES songs(song_id) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
         let conn = Arc::new(Mutex::new(conn));
-        match create_table_songs {
-            Err(_) => Err("Can't Create Song Base".to_string()),
-            _ => Ok(Self { conn, sender }),
-        }
+        Ok(Self { conn, sender })
     }
 
     pub fn get_song(&self, song_name: String) -> Result<Song, SongBaseError> {
         let pattern = format!("%{}%", song_name);
-        // self.sender.send(Pla)
-        let binding = self
-            .conn
-            .lock()
-            .unwrap();
+
+        let binding = self.conn.lock().unwrap();
 
         let mut fetch_query = binding
             .prepare(
@@ -58,23 +74,91 @@ impl SongBase {
             .unwrap();
 
         //Contains all result
-        let mut fetch_result = fetch_query.query([pattern])
+        let mut fetch_result = fetch_query
+            .query([pattern])
             .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
         //get the first row
-        let best_match = fetch_result.next()
+        let best_match = fetch_result
+            .next()
             .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?
             .ok_or(SongBaseError::EntryNotFound)?;
-     
+
+        let song_id: u32 = best_match.get("song_id").unwrap();
         let song_name: String = best_match.get("song_name").unwrap();
         let song_path: String = best_match.get("song_path").unwrap();
 
-        Ok(Song::new(song_name, song_path).unwrap())
+        Ok(Song::new(song_id, song_name, song_path).unwrap())
     }
 
-    // pub fn get_playlist(&self, playlist_name: String) -> Vec<Song> {
+    fn get_song_by_id(&self, song_id: u32) -> Result<Song, SongBaseError> {
+        let connection = self.conn.lock().unwrap();
 
-    // }
+        let mut song_query = connection.prepare("
+            SELECT * FROM songs WHERE song_id = ?1"
+        ).map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        let song = song_query.query_row([song_id], |row| {
+            let song_name: String = row.get("song_name")?;
+            let song_path: String = row.get("song_path")?;
+            Ok(Song::new(song_id, song_name, song_path))
+        }).map_err(|err| match err {
+            rusqliteError::QueryReturnedNoRows => SongBaseError::EntryNotFound,
+            _ => SongBaseError::DatabaseError(err.to_string()),
+        })?;
+
+        match song {
+            Ok(song) => Ok(song),
+            Err(err) => {
+                if let SongError::InvalidSongPath = err {
+                    connection.execute("DELETE FROM songs WHERE song_id = ?1", [song_id])
+                        .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+                    Err(SongBaseError::EntryNotFound)
+                } else {
+                    Err(SongBaseError::SongError(err))
+                }
+            }
+        }
+    }
+
+    pub fn get_playlist(&self, playlist_id: u8) -> Result<Playlist, SongBaseError> {
+        let connection = self.conn.lock().unwrap();
+
+        let playlist_name_query = "SELECT playlist_name FROM playlists
+        WHERE playlist_id = ?1";
+
+        let playlist_name: String =
+            connection.query_row(&playlist_name_query, [playlist_id], |row| {
+                row.get("playlist_name")
+            }).map_err(|err| {
+                if err.sqlite_error_code() == Some(ErrorCode::NotFound) {
+                    SongBaseError::EntryNotFound
+                } else {
+                    SongBaseError::DatabaseError(err.to_string())
+                }
+            })?;
+        
+        let mut playlist_songs_query = 
+            connection.prepare("SELECT song_id FROM playlist_song_link
+            WHERE playlist_id=?1").map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        let mut playlist = Playlist::new(playlist_name.clone());
+        
+        let song_ids = playlist_songs_query
+            .query_map([playlist_id], |row| row.get("song_id"))
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        for song_id in song_ids {
+            if let Ok(song_id) = song_id {
+                match self.get_song_by_id(song_id) {
+                    Ok(song) => playlist.add_song(song),
+                    _ => continue,
+                }
+            }
+        }
+        self.sender.send(PlayerAction::ConnectionMessage(playlist_name)).unwrap();
+        Ok(playlist)
+    }
 
     // const DEFAULT_DIRECTORIES: &str =
     pub fn scan_songs(&self, path: Option<String>) -> Result<String, SongBaseError> {

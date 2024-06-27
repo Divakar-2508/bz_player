@@ -4,14 +4,12 @@ use std::fmt::{Display, Formatter, Result};
 pub enum SongError {
     InvalidSongPath,
     InvalidSongFormat,
-    DecoderError,
     SongAccessError,
 }
 
 impl Display for SongError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         match self {
-            Self::DecoderError => write!(f, "Cannot Decode the Given Song"),
             Self::InvalidSongPath => write!(f, "Song Path Cannot be Found"),
             Self::InvalidSongFormat => write!(f, "Only ogg, wav, mp3 are supported"),
             Self::SongAccessError => write!(f, "No Access to Song File"),
@@ -54,7 +52,7 @@ impl Display for SongBaseError {
             Self::EntryNotFound => write!(f, "Entry Not Found"),
             Self::SongError(err) => write!(f, "{}", err),
             Self::InvalidPath => write!(f, "The given path does not exists"),
-            Self::DatabaseError(err) => write!(f, "{}", err),
+            Self::DatabaseError(err) => write!(f, "Database error: {}", err),
         }
     }
 }

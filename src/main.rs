@@ -5,6 +5,7 @@ mod ui;
 mod song_base;
 mod error;
 mod song;
+mod utility;
 
 fn main() -> io::Result<()> {
     let mut terminal = ui::init()?;
