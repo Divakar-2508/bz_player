@@ -43,6 +43,7 @@ pub enum SongBaseError {
     SongError(SongError),
     InvalidPath,
     DatabaseError(String),
+    NameAlreadyExist
 }
 
 impl Display for SongBaseError {
@@ -53,6 +54,7 @@ impl Display for SongBaseError {
             Self::SongError(err) => write!(f, "{}", err),
             Self::InvalidPath => write!(f, "The given path does not exists"),
             Self::DatabaseError(err) => write!(f, "Database error: {}", err),
+            Self::NameAlreadyExist => write!(f, "Given Name Already Exist"),
         }
     }
 }

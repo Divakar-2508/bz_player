@@ -94,24 +94,30 @@ impl SongBase {
     fn get_song_by_id(&self, song_id: u32) -> Result<Song, SongBaseError> {
         let connection = self.conn.lock().unwrap();
 
-        let mut song_query = connection.prepare("
-            SELECT * FROM songs WHERE song_id = ?1"
-        ).map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+        let mut song_query = connection
+            .prepare(
+                "
+            SELECT * FROM songs WHERE song_id = ?1",
+            )
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
-        let song = song_query.query_row([song_id], |row| {
-            let song_name: String = row.get("song_name")?;
-            let song_path: String = row.get("song_path")?;
-            Ok(Song::new(song_id, song_name, song_path))
-        }).map_err(|err| match err {
-            rusqliteError::QueryReturnedNoRows => SongBaseError::EntryNotFound,
-            _ => SongBaseError::DatabaseError(err.to_string()),
-        })?;
+        let song = song_query
+            .query_row([song_id], |row| {
+                let song_name: String = row.get("song_name")?;
+                let song_path: String = row.get("song_path")?;
+                Ok(Song::new(song_id, song_name, song_path))
+            })
+            .map_err(|err| match err {
+                rusqliteError::QueryReturnedNoRows => SongBaseError::EntryNotFound,
+                _ => SongBaseError::DatabaseError(err.to_string()),
+            })?;
 
         match song {
             Ok(song) => Ok(song),
             Err(err) => {
                 if let SongError::InvalidSongPath = err {
-                    connection.execute("DELETE FROM songs WHERE song_id = ?1", [song_id])
+                    connection
+                        .execute("DELETE FROM songs WHERE song_id = ?1", [song_id])
                         .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
                     Err(SongBaseError::EntryNotFound)
                 } else {
@@ -121,29 +127,75 @@ impl SongBase {
         }
     }
 
+    pub fn search_song(&self, song_name: &str) -> Result<Vec<(String, u32)>, SongBaseError> {
+        let connection = self.conn.lock().unwrap();
+
+        let search_query = "SELECT song_name, song_id FROM songs 
+            WHERE song_name LIKE ?1";
+        let pattern = format!("%{}%", song_name);
+
+        let mut prepared_statement = connection
+            .prepare(&search_query)
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        let query_result = prepared_statement
+            .query_map([pattern], |row| Ok((row.get("song_name")?, row.get("song_id")?)))
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+        
+        let mut songs = Vec::new();
+        for song in query_result {
+            if let Ok(song) = song {
+                songs.push(song);
+            } else {
+                continue;
+            }
+        }
+        Ok(songs)
+    }
+
+    pub fn create_playlist(&self, playlist_name: String) -> Result<(), SongBaseError> {
+        let connection = self.conn.lock().unwrap();
+        let playlist_create_query = "INSERT INTO playlists (playlist_name) VALUES (?1)";
+
+        connection.execute(&playlist_create_query, [playlist_name])
+            .map_err(|err| {
+                if err.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+                    SongBaseError::NameAlreadyExist
+                } else {
+                    SongBaseError::DatabaseError(err.to_string())
+                }
+            })?;
+        
+        Ok(())
+    }
+
     pub fn get_playlist(&self, playlist_id: u8) -> Result<Playlist, SongBaseError> {
         let connection = self.conn.lock().unwrap();
 
         let playlist_name_query = "SELECT playlist_name FROM playlists
         WHERE playlist_id = ?1";
 
-        let playlist_name: String =
-            connection.query_row(&playlist_name_query, [playlist_id], |row| {
+        let playlist_name: String = connection
+            .query_row(&playlist_name_query, [playlist_id], |row| {
                 row.get("playlist_name")
-            }).map_err(|err| {
+            })
+            .map_err(|err| {
                 if err.sqlite_error_code() == Some(ErrorCode::NotFound) {
                     SongBaseError::EntryNotFound
                 } else {
                     SongBaseError::DatabaseError(err.to_string())
                 }
             })?;
-        
-        let mut playlist_songs_query = 
-            connection.prepare("SELECT song_id FROM playlist_song_link
-            WHERE playlist_id=?1").map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+
+        let mut playlist_songs_query = connection
+            .prepare(
+                "SELECT song_id FROM playlist_song_link
+            WHERE playlist_id=?1",
+            )
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
         let mut playlist = Playlist::new(playlist_name.clone());
-        
+
         let song_ids = playlist_songs_query
             .query_map([playlist_id], |row| row.get("song_id"))
             .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
@@ -156,8 +208,17 @@ impl SongBase {
                 }
             }
         }
-        self.sender.send(PlayerAction::ConnectionMessage(playlist_name)).unwrap();
+        self.sender
+            .send(PlayerAction::ConnectionMessage(playlist_name))
+            .unwrap();
         Ok(playlist)
+    }
+
+    pub fn add_playlist_song(&self, playlist_id: u8, song_ids: Vec<u32>) -> Result<(), SongBaseError> {
+        let connection = self.conn.lock().unwrap();
+        // let playlist_song_add_query = "INSERT INTO playlist_song_relation"
+
+        Ok(())
     }
 
     // const DEFAULT_DIRECTORIES: &str =
@@ -246,5 +307,9 @@ impl SongBase {
                 _ => continue,
             }
         }
+    }
+    
+    pub fn create_playlist_with_songs(&self, playlist_name: String, folder_name: PathBuf) {
+        
     }
 }

@@ -2,7 +2,7 @@ use crate::{
     player::{Player, PlayerAction},
     song::{Playable, PlaylistActions},
     song_base::SongBase,
-    utility::{playlist, search_song, UtilityState},
+    utility::{render_search_song, UtilityState},
 };
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
@@ -14,9 +14,7 @@ use ratatui::{
     widgets::{block::*, *},
 };
 use std::{
-    io::{self, stdout, Stdout},
-    sync::mpsc::{self, Receiver},
-    time::Duration,
+    io::{self, stdout, Stdout}, path::PathBuf, sync::mpsc::{self, Receiver}, time::Duration
 };
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
@@ -103,28 +101,36 @@ impl AppActions {
                     return AppActions::Jump(-1);
                 }
                 return AppActions::Jump(song_index.unwrap());
-            },
+            }
             "exit" | "quit" | "out" => AppActions::Exit,
             "playlist" => {
                 let args = command_splitted.get(1..);
                 if args.is_none() {
-                   return AppActions::Utility(UtilityState::Playlist(PlaylistActions::Show));
+                    return AppActions::Utility(UtilityState::Playlist(PlaylistActions::Show));
                 }
                 let args = args.unwrap();
                 let playlist_subcommand = args.get(0);
                 if playlist_subcommand.is_none() {
-                    return AppActions::Utility(UtilityState::Playlist(PlaylistActions::Show))
+                    return AppActions::Utility(UtilityState::Playlist(PlaylistActions::Show));
                 }
                 let playlist_command = match *playlist_subcommand.unwrap() {
-                    "show" | "-s" | "s" => {
-                        PlaylistActions::Show
-                    },
+                    "show" | "-s" | "s" => PlaylistActions::Show,
                     "create" | "-c" | "c" => {
-                        let playlist_name = args.get(1..);
-                        if playlist_name.is_none() {
-                            PlaylistActions::Create(None)
-                        } else {
-                            PlaylistActions::Create(Some(playlist_name.unwrap().join(" ")))
+                        match args.get(1..) {
+                            None => PlaylistActions::Create(None, None),
+                            Some(playlist_create_args) => {
+                                if let Some(folder_index) =  playlist_create_args.iter().position(|arg| arg == &"-f") {
+                                    let playlist_name = playlist_create_args[..folder_index].join(" ");
+                                    let folder = PathBuf::from(playlist_create_args[(folder_index + 1)..].join(" "));
+                                    if folder.exists() {
+                                        PlaylistActions::Create(Some(playlist_name), Some(folder))
+                                    } else {
+                                        PlaylistActions::Create(Some(playlist_name), None)
+                                    }
+                                } else {
+                                    PlaylistActions::Create(Some(playlist_create_args.join(" ")), None)
+                                }
+                            },
                         }
                     },
                     "add" | "-a" | "a" => {
@@ -145,19 +151,20 @@ impl AppActions {
                                     if is_whole.is_none() {
                                         PlaylistActions::Add(0, None)
                                     } else if is_whole.unwrap().eq(&"*") {
-                                        PlaylistActions::AddAll
+                                        PlaylistActions::AddAll(playlist_id.ok())
                                     } else {
-                                        let song_names: Vec<String> = song_names.unwrap()
+                                        let song_names: Vec<String> = song_names
+                                            .unwrap()
                                             .join(" ")
                                             .split(",")
                                             .map(|s| s.trim().to_owned())
                                             .collect();
                                         PlaylistActions::Add(playlist_id.unwrap(), Some(song_names))
                                     }
-                                } 
+                                }
                             }
                         }
-                    },
+                    }
                     "view" | "-v" | "v" => {
                         let playlist_id = args.get(1);
                         if playlist_id.is_none() {
@@ -166,11 +173,11 @@ impl AppActions {
                             let playlist_id = playlist_id.unwrap().parse::<u8>().ok();
                             PlaylistActions::View(playlist_id)
                         }
-                    },
+                    }
                     _ => PlaylistActions::Invalid,
                 };
                 AppActions::Utility(UtilityState::Playlist(playlist_command))
-            },
+            }
             "search" => {
                 let song_name = command_splitted.get(1..);
                 if song_name.is_none() {
@@ -284,7 +291,7 @@ impl App {
                             }
                         }
                     }
-                },
+                }
                 Playable::Playlist(playlist_id) => {
                     if playlist_id == 0 {
                         self.log_info(
@@ -337,8 +344,7 @@ impl App {
                 let return_value = self.song_base.scan_songs(path);
                 let log_info = return_value
                     .map(|s| format!("Searching {}", s))
-                    .map_err(|err| err.to_string())
-                    .unwrap();
+                    .unwrap_or_else(|err| err.to_string());
                 self.log_info(log_info);
             }
             AppActions::Jump(index) => match usize::try_from(index) {
@@ -355,11 +361,44 @@ impl App {
                 self.log_info("See Ya! Have a Great Time");
                 self.exit = true;
             }
-            AppActions::Utility(utility) => {
-                match utility {
-                    UtilityState::Playlist(playlist_command) => self.log_info(playlist_command),
-                    _ => self.utility_state = utility
-                }
+            AppActions::Utility(utility) => match utility {
+                UtilityState::Playlist(playlist_command) =>{
+                    match playlist_command {
+                        PlaylistActions::Show => {},
+                        PlaylistActions::Create(playlist_name, folder_name) => {
+                            if folder_name.is_some() {
+                                if playlist_name.is_some() {
+                                    self.song_base.create_playlist_with_songs(playlist_name.unwrap(), folder_name.unwrap());
+                                } else {
+                                    let folder_name = folder_name.unwrap();
+                                    self.song_base.create_playlist_with_songs(folder_name.file_name().unwrap().to_string_lossy().to_string(), folder_name);
+                                }
+                            } else {
+                                if playlist_name.is_none() {
+                                    self.log_info("Specify the song name to create, try 'help playlist'");
+                                } else {
+                                    match self.song_base.create_playlist(playlist_name.unwrap()) {
+                                        Err(err) => self.log_info(err),
+                                        _ => (),
+                                    }
+                                }
+                            }
+                        },
+                        PlaylistActions::AddAll(id) => {
+                            if id.is_none() {
+                                self.log_info("Please mention playlist id to add to, try 'help playlist'");
+                                self.command.clear();
+                                return;
+                            }
+                            match self.song_base.add_playlist_song(id.unwrap(), self.player.get_queue_ids()) {
+                                Err(err) => self.log_info(err),
+                                _ => (),
+                            }
+                        },
+                        _ => {},
+                    }
+                },
+                _ => self.utility_state = utility,
             },
             AppActions::Invalid => self.log_info("Can't get that, Check out Top Right ↗️"),
         }
@@ -475,6 +514,7 @@ impl Widget for &App {
             .constraints([Constraint::Fill(1), Constraint::Fill(1)])
             .split(right_layout[0]);
 
+        let utility_area = top_right_layout[0];
         match &self.utility_state {
             UtilityState::Playlist(playlist_command) => {
                 // let playlists = vec!["baka".to_string(), "smth".to_string(), "peace".to_string()];
@@ -482,8 +522,8 @@ impl Widget for &App {
                 // self.log_info(playlist_command.clone())
             }
             UtilityState::SearchSong(song_name) => {
-                let song_list = vec!["Hello".to_string(), "Baka".to_string()];
-                search_song(top_right_layout[0], buf, &song_list, &song_name);
+                let song_list = self.song_base.search_song(song_name);
+                render_search_song(utility_area, buf, song_list.as_ref(), song_name);
             }
             _ => (),
         }

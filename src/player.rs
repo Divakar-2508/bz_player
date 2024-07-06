@@ -50,6 +50,10 @@ impl Player {
         Ok(self.queue.len() as u32)
     }
 
+    // pub fn add_track_multiple(&mut self, songs: Vec<Song>) -> Result<u32, PlayerError> {
+        
+    // }
+
     pub fn add_playlist(&mut self,mut playlist: Playlist) -> Result<u32, PlayerError> {
         self.queue.append(&mut playlist.songs);
         if self.sink.empty() {
@@ -111,6 +115,13 @@ impl Player {
             .collect()
     }
 
+    pub fn get_queue_ids(&self) -> Vec<u32> {
+        self.queue
+            .iter()
+            .map(|song| song.song_id)
+            .collect()
+    }
+
     pub fn current_song(&self) -> u32 {
         self.current_song
     }
@@ -119,18 +130,3 @@ impl Player {
         self.sink.empty()
     }
 }
-
-    // fn handle_playback(sink: Arc<Mutex<Sink>>, sender: Sender<PlayerAction>) {
-    //     loop {
-    //         thread::park();
-    //         loop {
-    //             thread::sleep(Duration::from_secs_f32(0.5));
-    //             let sink = sink.lock().unwrap();
-    //             if sink.empty() {
-    //                 sink.skip_one();
-    //                 sender.send(PlayerAction::NextSong).unwrap();
-    //                 break;
-    //             }
-    //         }
-    //     }
-    // }

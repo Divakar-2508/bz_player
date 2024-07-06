@@ -17,9 +17,9 @@ impl std::fmt::Display for PlaylistActions {
         match self {
             PlaylistActions::Show => write!(f, "Playlist Show"),
             PlaylistActions::View(playlist_id) => write!(f, "Playlist View {:?}", playlist_id),
-            PlaylistActions::Create(playlist_name) => write!(f, "Playlist Create {:?}", playlist_name),
+            PlaylistActions::Create(playlist_name, path) => write!(f, "Playlist Create {:?} {:?}", playlist_name, path),
             PlaylistActions::Add(id, songs) => write!(f, "Playlist Add {:?} {:?}", id, songs),
-            PlaylistActions::AddAll => write!(f, "Playlist add *"),
+            PlaylistActions::AddAll(id) => write!(f, "Playlist add * {:?}", id),
             PlaylistActions::Invalid => write!(f, "Playlist Invalid"),
         }
     }
@@ -29,9 +29,9 @@ impl std::fmt::Display for PlaylistActions {
 pub enum PlaylistActions {
     Show,
     View(Option<u8>),
-    Create(Option<String>),
+    Create(Option<String>, Option<PathBuf>),
     Add(u8, Option<Vec<String>>),
-    AddAll,
+    AddAll(Option<u8>),
     Invalid,
 }
 
