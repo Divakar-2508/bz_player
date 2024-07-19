@@ -127,6 +127,16 @@ impl SongBase {
         }
     }
 
+    pub fn add_song(conn: &mut Connection, song: &Song) -> Result<(), SongBaseError> {
+        match conn.execute(INSERT_QUERY, (song.song_name, song.song_path))
+        {
+            Ok(_) | Err(err) if err.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) => {
+                Ok(())
+            },
+            Err(err) => SongBaseError::DatabaseError(err.to_string())
+        }
+    }
+
     pub fn search_song(&self, song_name: &str) -> Result<Vec<(String, u32)>, SongBaseError> {
         let connection = self.conn.lock().unwrap();
 
@@ -167,6 +177,11 @@ impl SongBase {
             })?;
         
         Ok(())
+    }
+
+    pub fn create_playlist_with_songs(&self, playlist_name: String, folder_name: PathBuf) -> Result<(), SongBaseError> {
+        self.create_playlist(playlist_name)?;
+
     }
 
     pub fn get_playlist(&self, playlist_id: u8) -> Result<Playlist, SongBaseError> {
@@ -216,7 +231,11 @@ impl SongBase {
 
     pub fn add_playlist_song(&self, playlist_id: u8, song_ids: Vec<u32>) -> Result<(), SongBaseError> {
         let connection = self.conn.lock().unwrap();
-        // let playlist_song_add_query = "INSERT INTO playlist_song_relation"
+        // connection.tra
+        let playlist_song_add_query = "
+            INSERT INTO playlist_song_relation (song_id, playlist_id) VALUES
+            (?1, ?2)";
+        connection.execute_batch(sql)
 
         Ok(())
     }
@@ -238,13 +257,19 @@ impl SongBase {
             let sender_clone = self.sender.clone();
             let path_clone = path.clone();
 
-            thread::spawn(move || Self::fetch_songs(path_clone, connection, &sender_clone));
+            thread::spawn(move || Self::fetch_songs(path_clone, &connection, &sender_clone));
             return Ok(format!("{}", path.to_string_lossy()));
         }
     }
 
+    fn get_folder_songs(&self, folder_name: PathBuf) -> Result<Vec<u32>, SongBaseError>{
+        for file in folder_name.read_dir().map_err(|err| SongBaseError::AccessFailed)? {
+
+        }
+    }
+
     const INSERT_QUERY: &'static str = "INSERT INTO songs (song_name, song_path) VALUES (?1, ?2)";
-    fn fetch_songs(path: PathBuf, conn: Arc<Mutex<Connection>>, sender: &Sender<PlayerAction>) {
+    fn fetch_songs(path: PathBuf, conn: &Arc<Mutex<Connection>>, sender: &Sender<PlayerAction>) {
         let read_dir = path.read_dir();
         if read_dir.is_err() {
             let message = format!("Can't read dir: {}", path.to_str().unwrap());
@@ -266,7 +291,7 @@ impl SongBase {
                 match dir_name {
                     Some(dir_name) if dir_name != "node_modules" || dir_name != "target" => {
                         let connection = Arc::clone(&conn);
-                        Self::fetch_songs(entry_path, connection, sender);
+                        Self::fetch_songs(entry_path, &connection, sender);
                     }
                     _ => continue,
                 }
@@ -307,9 +332,5 @@ impl SongBase {
                 _ => continue,
             }
         }
-    }
-    
-    pub fn create_playlist_with_songs(&self, playlist_name: String, folder_name: PathBuf) {
-        
     }
 }
