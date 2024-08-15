@@ -4,11 +4,13 @@ use crate::{
     song_base::SongBase,
     utility::{render_search_song, UtilityState},
 };
+
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+
 use ratatui::{
     prelude::*,
     widgets::{block::*, *},
@@ -339,7 +341,6 @@ impl App {
                         }
                     }
                 }
-                Playable::Whole => (),
             },
             AppActions::Play => match self.player.play(false) {
                 Ok(_) => self.log_info("Track Resumed"),
@@ -624,4 +625,3 @@ fn command_box(rect: Rect, buf: &mut Buffer, command: &str) {
         .wrap(Wrap { trim: true });
     input_paragraph.render(rect, buf);
 }
-
