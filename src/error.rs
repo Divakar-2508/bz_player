@@ -58,3 +58,9 @@ impl Display for SongBaseError {
         }
     }
 }
+
+impl From<rusqlite::Error> for SongBaseError {
+    fn from(value: rusqlite::Error) -> Self {
+        Self::DatabaseError(value.to_string())
+    }
+}

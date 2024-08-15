@@ -2,11 +2,10 @@ use ratatui::{buffer::Buffer, layout::{Alignment, Rect}, style::{Color, Style, S
 
 use crate::{error::SongBaseError, song::PlaylistActions};
 
+#[derive(PartialEq, Debug)]
 pub enum UtilityState {
     Playlist(PlaylistActions),
     SearchSong(String),
-    Joke,
-    Question,
     Help
 }
 
