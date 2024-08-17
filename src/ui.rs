@@ -2,7 +2,7 @@ use crate::{
     player::{Player, PlayerAction},
     song::{Playable, PlaylistActions},
     song_base::SongBase,
-    utility::{render_search_song, UtilityState},
+    utility::{render_playlist_view, render_search_song, UtilityState},
 };
 
 use crossterm::{
@@ -15,6 +15,7 @@ use ratatui::{
     prelude::*,
     widgets::{block::*, *},
 };
+
 use std::{
     io::{self, stdout, Stdout},
     path::PathBuf,
@@ -48,6 +49,9 @@ enum AppActions {
     Empty,
     Exit,
     Utility(UtilityState),
+    Clear,
+    Remove(usize),
+    LogMessage(String),
 }
 
 impl AppActions {
@@ -74,7 +78,8 @@ impl AppActions {
                             }
                         }
                     }
-                    Some(args) if *args.get(0).unwrap() == "-s" => {
+
+                    Some(args) if *args.get(0).unwrap() == "-i" => {
                         if args.get(1).is_none() {
                             AppActions::Add(Playable::None)
                         } else {
@@ -84,16 +89,18 @@ impl AppActions {
                                 .into_iter()
                                 .filter_map(|x| x.parse::<u32>().ok())
                                 .collect();
-                            AppActions::Add(Playable::SearchSong(song_ids))
+                            AppActions::Add(Playable::SongById(song_ids))
                         }
                     }
+
                     Some(song_name) => {
                         if song_name.get(0).is_none() {
                             AppActions::Add(Playable::None)
                         } else {
-                            AppActions::Add(Playable::Song(song_name.join(" ")))
+                            AppActions::Add(Playable::SongByName(song_name.join(" ")))
                         }
                     }
+
                     None => AppActions::Add(Playable::None),
                 }
             }
@@ -119,6 +126,19 @@ impl AppActions {
                     return AppActions::Jump(-1);
                 }
                 return AppActions::Jump(song_index.unwrap());
+            }
+            "clear" => AppActions::Clear,
+            "remove" | "rem" => {
+                let song_id = command_splitted.get(1);
+                if let Some(id) = song_id {
+                    if let Ok(id) = id.parse::<usize>() {
+                        AppActions::Remove(id)
+                    } else {
+                        AppActions::LogMessage("Invalid Song Index".to_string())
+                    }
+                } else {
+                    AppActions::LogMessage("usage: remove <id>".to_string())
+                }
             }
             "exit" | "quit" | "out" => AppActions::Exit,
             "playlist" => {
@@ -298,7 +318,7 @@ impl App {
         match command {
             AppActions::Add(playable) => match playable {
                 Playable::None => self.log_info("Specify Song Name".to_string()),
-                Playable::Song(song_name) => {
+                Playable::SongByName(song_name) => {
                     let song = self.song_base.find_song_by_name(song_name);
                     match song {
                         Err(err) => self.log_info(err),
@@ -312,11 +332,16 @@ impl App {
                         }
                     }
                 }
-                Playable::SearchSong(song_ids) => {
-                    if let UtilityState::SearchSong(_) = self.utility_state {
-                    } else {
-                        self.log_info("Utility Search Song need to be active to use `-s` flag");
-                    }
+                Playable::SongById(song_ids) => {
+                    song_ids.into_iter().for_each(|song_id| {
+                        let song = self.song_base.find_song_by_id(song_id);
+                        match song {
+                            Ok(song) => {
+                                self.player.add_track(song).unwrap();
+                            }
+                            Err(err) => self.log_info(format!("Can't add song: {}", err)),
+                        }
+                    });
                 }
                 Playable::Playlist(playlist_id) => {
                     if playlist_id == 0 {
@@ -386,11 +411,18 @@ impl App {
                 self.log_info("See Ya! Have a Great Time");
                 self.exit = true;
             }
+            AppActions::Clear => self.player.clear_tracks(),
+            AppActions::Remove(index) => match self.player.remove_track(index) {
+                Ok(song_name) => self.log_info(format!("Removed {}", song_name)),
+                Err(err) => self.log_info(err),
+            },
             AppActions::Utility(utility) => match utility {
                 UtilityState::Playlist(playlist_command) => {
                     self.log_info(&playlist_command);
                     match playlist_command {
-                        PlaylistActions::Show => {}
+                        PlaylistActions::Show => {
+                            self.utility_state = UtilityState::Playlist(PlaylistActions::Show)
+                        }
                         PlaylistActions::Create(playlist_name, folder_name) => {
                             self.log_info(format!("{:?} {:?}", playlist_name, folder_name));
                             if folder_name.is_some() {
@@ -448,6 +480,7 @@ impl App {
                 }
                 _ => self.utility_state = utility,
             },
+            AppActions::LogMessage(msg) => self.log_info(msg),
             AppActions::Invalid => self.log_info("Can't get that, Check out Top Right ↗️"),
         }
         self.command.clear();
@@ -499,7 +532,7 @@ impl Widget for &App {
         //Upper Layout
         let upper_layout = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Fill(1), Constraint::Length(80)])
+            .constraints([Constraint::Fill(1), Constraint::Fill(2)])
             .split(main_layout[0]);
 
         //Queue Box - Left Full
@@ -567,8 +600,9 @@ impl Widget for &App {
             UtilityState::Playlist(playlist_command) => {
                 match playlist_command {
                     PlaylistActions::Show => {
-                        // let playlist_names = self.song_base.get_playlists();
-                        // render_playlist_view(utility_area, buf, playlist_names)
+                        if let Ok(playlist) = self.song_base.get_playlists() {
+                            render_playlist_view(utility_area, buf, &playlist)
+                        }
                     }
                     _ => (),
                 }

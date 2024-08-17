@@ -1,4 +1,10 @@
-use ratatui::{buffer::Buffer, layout::{Alignment, Rect}, style::{Color, Style, Stylize}, text::Line, widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap}};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Alignment, Rect},
+    style::{Color, Style, Stylize},
+    text::Line,
+    widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap},
+};
 
 use crate::{error::SongBaseError, song::PlaylistActions};
 
@@ -6,7 +12,7 @@ use crate::{error::SongBaseError, song::PlaylistActions};
 pub enum UtilityState {
     Playlist(PlaylistActions),
     SearchSong(String),
-    Help
+    Help,
 }
 
 fn render_block<'a>(name: &str) -> Block<'a> {
@@ -18,23 +24,34 @@ fn render_block<'a>(name: &str) -> Block<'a> {
         .border_style(Style::default().fg(Color::White))
 }
 
-pub fn render_search_song(rect: Rect, buf: &mut Buffer, song_list: Result<&Vec<(String, u32)>, &SongBaseError>, song_name: &str) {
+pub fn render_search_song(
+    rect: Rect,
+    buf: &mut Buffer,
+    song_list: Result<&Vec<(String, u32)>, &SongBaseError>,
+    song_name: &str,
+) {
     let name = format!("SearchSong: {}", song_name);
     let block = render_block(&name);
-    
+
     if song_list.is_err() {
-        let line = Line::raw(format!("Can't get the data, but got an error: {:?}", song_list.err().take().unwrap().to_string()));
+        let line = Line::raw(format!(
+            "Can't get the data, but got an error: {:?}",
+            song_list.err().take().unwrap().to_string()
+        ));
         Paragraph::new(line)
             .centered()
             .block(block)
             .wrap(Wrap { trim: true })
             .render(rect, buf);
-        return; 
+        return;
     }
 
     let song_list = song_list.unwrap();
     if song_list.is_empty() {
-        let line = vec![Line::raw(""), Line::raw(format!("That's Empty!, gambare gambare"))];
+        let line = vec![
+            Line::raw(""),
+            Line::raw(format!("That's Empty!, gambare gambare")),
+        ];
         Paragraph::new(line)
             .centered()
             .block(block)
@@ -45,9 +62,12 @@ pub fn render_search_song(rect: Rect, buf: &mut Buffer, song_list: Result<&Vec<(
 
     let mut lines: Vec<Line> = song_list
         .iter()
-        .enumerate()
-        .map(|(index, song)| Line::raw(format!("{}. {} ({})", index, song.0, song.1)))
+        .map(|song| {
+            let song_id = format!(" ({})", song.1);
+            Line::default().spans(vec![song.0.as_str().blue(), song_id.red()])
+        })
         .collect();
+
     lines.insert(0, Line::raw(""));
 
     let para = Paragraph::new(lines)
@@ -58,13 +78,12 @@ pub fn render_search_song(rect: Rect, buf: &mut Buffer, song_list: Result<&Vec<(
     para.render(rect, buf);
 }
 
-pub fn render_playlist_view(rect: Rect, buf: &mut Buffer, playlist_names: &Vec<String>) {
+pub fn render_playlist_view(rect: Rect, buf: &mut Buffer, playlist_names: &Vec<(u8, String)>) {
     let block = render_block("Playlist");
 
     let lines: Vec<Line> = playlist_names
         .iter()
-        .enumerate()
-        .map(|(index, song)| Line::raw(format!("{}. {}", index, song)))
+        .map(|(index, song)| Line::raw(format!("{} ({})", song, index)))
         .collect();
 
     let para = Paragraph::new(lines)

@@ -1,7 +1,7 @@
-use std::{fmt::Display, sync::mpsc::Sender};
-use rodio::{self, OutputStream, Sink};
 use crate::error::PlayerError;
 use crate::song::{Playlist, Song};
+use rodio::{self, OutputStream, Sink};
+use std::{fmt::Display, sync::mpsc::Sender};
 
 pub struct Player {
     queue: Vec<Song>,
@@ -29,9 +29,9 @@ impl Player {
         let (_output_stream, output_stream_handle) = OutputStream::try_default().unwrap();
         let queue = Vec::new();
         let sender = sender;
-        
+
         let sink = Sink::try_new(&output_stream_handle).unwrap();
-    
+
         let player = Self {
             queue,
             current_song: 0,
@@ -50,11 +50,20 @@ impl Player {
         Ok(self.queue.len() as u32)
     }
 
-    // pub fn add_track_multiple(&mut self, songs: Vec<Song>) -> Result<u32, PlayerError> {
-        
-    // }
+    pub fn clear_tracks(&mut self) {
+        self.queue.clear();
+    }
 
-    pub fn add_playlist(&mut self,mut playlist: Playlist) -> Result<u32, PlayerError> {
+    pub fn remove_track(&mut self, song_id: usize) -> Result<String, PlayerError> {
+        if self.queue.len() > song_id - 1 {
+            let removed_song = self.queue.remove(song_id - 1);
+            Ok(removed_song.song_name)
+        } else {
+            Err(PlayerError::IndexOutOfBounds)
+        }
+    }
+
+    pub fn add_playlist(&mut self, mut playlist: Playlist) -> Result<u32, PlayerError> {
         self.queue.append(&mut playlist.songs);
         if self.sink.empty() {
             self.play(true)?;
@@ -82,6 +91,12 @@ impl Player {
             Err(PlayerError::IndexOutOfBounds)
         } else {
             self.current_song += 1;
+            self.communicater
+                .send(PlayerAction::ConnectionMessage(format!(
+                    "{}",
+                    self.current_song
+                )))
+                .unwrap();
             self.play(true)?;
             Ok(self.current_song)
         }
@@ -109,17 +124,11 @@ impl Player {
     }
 
     pub fn get_queue(&self) -> Vec<&String> {
-        self.queue
-            .iter()
-            .map(|song| &song.song_name)
-            .collect()
+        self.queue.iter().map(|song| &song.song_name).collect()
     }
 
     pub fn get_queue_ids(&self) -> Vec<u32> {
-        self.queue
-            .iter()
-            .map(|song| song.song_id)
-            .collect()
+        self.queue.iter().map(|song| song.song_id).collect()
     }
 
     pub fn current_song(&self) -> u32 {
@@ -130,3 +139,4 @@ impl Player {
         self.sink.empty()
     }
 }
+

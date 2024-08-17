@@ -10,7 +10,7 @@ use crate::{
     player::PlayerAction,
     song::{Playlist, Song},
 };
-use rusqlite::{Connection, Error as rusqliteError, ErrorCode};
+use rusqlite::{Connection, Error as rusqliteError, ErrorCode, Row};
 
 pub struct SongBase {
     conn: Arc<Mutex<Connection>>,
@@ -95,7 +95,7 @@ impl SongBase {
         Ok(Song::new(song_id, song_name, song_path).unwrap())
     }
 
-    fn find_song_by_id(&self, song_id: u32) -> Result<Song, SongBaseError> {
+    pub fn find_song_by_id(&self, song_id: u32) -> Result<Song, SongBaseError> {
         let connection = self.conn.lock().unwrap();
 
         let mut song_query = connection
@@ -139,18 +139,24 @@ impl SongBase {
         song_path: &str,
     ) -> Result<u32, SongBaseError> {
         match conn.execute(Self::INSERT_SONG_QUERY, (song_name, song_path)) {
-            Err(err) if err.sqlite_error_code() != Some(ErrorCode::ConstraintViolation) => Err(SongBaseError::DatabaseError(err.to_string())),
+            Err(err) if err.sqlite_error_code() != Some(ErrorCode::ConstraintViolation) => {
+                Err(SongBaseError::DatabaseError(err.to_string()))
+            }
             _ => {
-                let mut query_statement = conn.prepare(Self::RETRIEVE_ID_QUERY)
+                let mut query_statement = conn
+                    .prepare(Self::RETRIEVE_ID_QUERY)
                     .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
-                let mut query_result = query_statement.query([song_name, song_path])
+                let mut query_result = query_statement
+                    .query([song_name, song_path])
                     .map_err(|err| SongBaseError::from(err))?;
-                
-                let song_row = query_result.next().map_err(|err| SongBaseError::from(err))?
+
+                let song_row = query_result
+                    .next()
+                    .map_err(|err| SongBaseError::from(err))?
                     .unwrap();
-                
+
                 Ok(song_row.get("song_id").unwrap())
-            },
+            }
         }
     }
 
@@ -184,22 +190,19 @@ impl SongBase {
 
     pub fn create_playlist(&self, playlist_name: String) -> Result<u8, SongBaseError> {
         let connection = self.conn.lock().unwrap();
-        let mut playlist_create_query = connection.prepare("INSERT INTO playlists (playlist_name) VALUES (?1)")
+        let mut playlist_create_query = connection
+            .prepare("INSERT INTO playlists (playlist_name) VALUES (?1) RETURNING playlist_id")
             .map_err(|err| SongBaseError::from(err))?;
 
-        let mut row = playlist_create_query
-            .query([playlist_name])
+        playlist_create_query
+            .query_row([playlist_name], |row| row.get("playlist_id"))
             .map_err(|err| {
                 if err.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
                     SongBaseError::NameAlreadyExist
                 } else {
                     SongBaseError::DatabaseError(err.to_string())
                 }
-            })?;
-        self.sender.send(PlayerAction::ConnectionMessage(format!("{:?}", row.next()))).unwrap();
-        let res = row.next().unwrap().unwrap();
-        
-        Ok(res.get("playlist_id").unwrap())
+            })
     }
 
     pub fn create_playlist_from_path(
@@ -226,16 +229,32 @@ impl SongBase {
                     &mut conn,
                     song.file_name().to_string_lossy().deref(),
                     song.path().to_string_lossy().deref(),
-                ).unwrap()
-            }).collect();
+                )
+                .unwrap()
+            })
+            .collect();
         self.add_playlist_song(playlist_id, song_ids)?;
         Ok(())
     }
 
-    // pub fn get_playlists(&self) -> Result<Vec<String>, SongBaseError> {
-    //     let conn = self.conn.lock().unwrap();
-        
-    // }
+    pub fn get_playlists(&self) -> Result<Vec<(u8, String)>, SongBaseError> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut playlist_name_query = conn
+            .prepare("SELECT playlist_id, playlist_name FROM playlists")
+            .map_err(|err| SongBaseError::from(err))?;
+
+        let query_result = playlist_name_query
+            .query_map([], |row| {
+                let playlist_id: u8 = row.get("playlist_id")?;
+                let playlist_name: String = row.get("playlist_name")?;
+
+                Ok((playlist_id, playlist_name))
+            })
+            .map_err(|err| SongBaseError::from(err))?;
+
+        Ok(query_result.filter_map(|row| row.ok()).collect())
+    }
 
     pub fn get_playlist(&self, playlist_id: u8) -> Result<Playlist, SongBaseError> {
         let connection = self.conn.lock().unwrap();
