@@ -52,6 +52,7 @@ enum AppActions {
     Clear,
     Remove(usize),
     LogMessage(String),
+    TogglePlayer,
 }
 
 impl AppActions {
@@ -61,12 +62,12 @@ impl AppActions {
             return AppActions::Empty;
         }
 
-        let main_command = command_splitted.get(0).unwrap().trim().to_lowercase();
+        let main_command = command_splitted.first().unwrap().trim().to_lowercase();
         match main_command.as_str() {
             "add" | "push" => {
                 let args = command_splitted.get(1..);
                 match args {
-                    Some(args) if *args.get(0).unwrap() == "-p" => {
+                    Some(args) if *args.first().unwrap() == "-p" => {
                         if args.get(1).is_none() {
                             AppActions::Add(Playable::None)
                         } else {
@@ -79,14 +80,14 @@ impl AppActions {
                         }
                     }
 
-                    Some(args) if *args.get(0).unwrap() == "-i" => {
+                    Some(args) if *args.first().unwrap() == "-i" => {
                         if args.get(1).is_none() {
                             AppActions::Add(Playable::None)
                         } else {
                             let song_ids: Vec<u32> = args
                                 .get(1..)
                                 .unwrap()
-                                .into_iter()
+                                .iter()
                                 .filter_map(|x| x.parse::<u32>().ok())
                                 .collect();
                             AppActions::Add(Playable::SongById(song_ids))
@@ -94,17 +95,34 @@ impl AppActions {
                     }
 
                     Some(song_name) => {
-                        if song_name.get(0).is_none() {
+                        if song_name.first().is_none() {
                             AppActions::Add(Playable::None)
                         } else {
-                            AppActions::Add(Playable::SongByName(song_name.join(" ")))
+                            let mut current_song_name = String::new();
+                            let mut song_vec = Vec::new();
+
+                            for name in song_name {
+                                current_song_name.push_str(name);
+                                if name.contains(",") {
+                                    current_song_name = current_song_name.replace(",", "");
+                                    song_vec.push(current_song_name.clone());
+                                    current_song_name.clear();
+                                }
+                            }
+
+                            if !current_song_name.is_empty() {
+                                song_vec.push(current_song_name);
+                            }
+
+                            AppActions::Add(Playable::SongByName(song_vec))
                         }
                     }
 
                     None => AppActions::Add(Playable::None),
                 }
             }
-            "play" | "p" => AppActions::Play,
+            "p" => AppActions::TogglePlayer,
+            "play" | "res" | "resume" => AppActions::Play,
             "next" | "skip" => AppActions::NextSong,
             "pause" | "wait" => AppActions::Pause,
             "fetch" | "scan" => {
@@ -125,7 +143,7 @@ impl AppActions {
                 if song_index.is_err() {
                     return AppActions::Jump(-1);
                 }
-                return AppActions::Jump(song_index.unwrap());
+                AppActions::Jump(song_index.unwrap())
             }
             "clear" => AppActions::Clear,
             "remove" | "rem" => {
@@ -179,7 +197,7 @@ impl AppActions {
                             PlaylistActions::Add(0, None)
                         } else {
                             let args = playlist_args.unwrap();
-                            let playlist_id = args.get(0).unwrap().parse::<u8>();
+                            let playlist_id = args.first().unwrap().parse::<u8>();
                             if playlist_id.is_err() {
                                 PlaylistActions::Add(0, None)
                             } else {
@@ -187,7 +205,7 @@ impl AppActions {
                                 if song_names.is_none() {
                                     PlaylistActions::Add(playlist_id.unwrap(), None)
                                 } else {
-                                    let is_whole = song_names.unwrap().get(0);
+                                    let is_whole = song_names.unwrap().first();
                                     if is_whole.is_none() {
                                         PlaylistActions::Add(0, None)
                                     } else if is_whole.unwrap().eq(&"*") {
@@ -220,10 +238,11 @@ impl AppActions {
             }
             "search" => {
                 let song_name = command_splitted.get(1..);
-                if song_name.is_none() {
-                    AppActions::Utility(UtilityState::SearchSong("*".to_string()))
-                } else {
-                    AppActions::Utility(UtilityState::SearchSong(song_name.unwrap().join(" ")))
+                match song_name.is_none() {
+                    true => AppActions::Utility(UtilityState::SearchSong("*".to_string())),
+                    false => {
+                        AppActions::Utility(UtilityState::SearchSong(song_name.unwrap().join(" ")))
+                    }
                 }
             }
             _ => AppActions::Invalid,
@@ -273,13 +292,15 @@ impl App {
                     PlayerAction::ConnectionMessage(msg) => self.log_info(msg),
                 }
             }
-            if self.player.is_empty() {
+
+            if self.player.is_sink_empty() && !self.player.is_last() {
                 match self.player.next_track() {
-                    Ok(index) => self.log_info(format!(
-                        "Now Playing: {}",
-                        self.player.get_song_detail(index as usize).unwrap()
+                    Ok(id) => self.log_info(format!(
+                        "Playing {} @ {}",
+                        self.player.current_song_name(),
+                        id
                     )),
-                    _ => (),
+                    Err(err) => self.log_info(err),
                 }
             }
         }
@@ -318,16 +339,21 @@ impl App {
         match command {
             AppActions::Add(playable) => match playable {
                 Playable::None => self.log_info("Specify Song Name".to_string()),
-                Playable::SongByName(song_name) => {
-                    let song = self.song_base.find_song_by_name(song_name);
-                    match song {
-                        Err(err) => self.log_info(err),
-                        Ok(song) => {
-                            let song_name = song.song_name.clone();
-                            match self.player.add_track(song) {
-                                Ok(index) => self
-                                    .log_info(format!("Added {} to queue @ {}", song_name, index)),
-                                Err(err) => self.log_info(err),
+                Playable::SongByName(song_names) => {
+                    self.log_info(song_names.join(" "));
+                    for song_name in song_names {
+                        let song = self.song_base.find_song_by_name(song_name);
+                        match song {
+                            Err(err) => self.log_info(err),
+                            Ok(song) => {
+                                let song_name = song.song_name.clone();
+                                match self.player.add_track(song) {
+                                    Ok(index) => self.log_info(format!(
+                                        "Added {} to queue @ {}",
+                                        song_name, index
+                                    )),
+                                    Err(err) => self.log_info(err),
+                                }
                             }
                         }
                     }
@@ -367,6 +393,7 @@ impl App {
                     }
                 }
             },
+            AppActions::TogglePlayer => self.log_info(self.player.toggle_player()),
             AppActions::Play => match self.player.play(false) {
                 Ok(_) => self.log_info("Track Resumed"),
                 Err(err) => self.log_info(err),
@@ -413,7 +440,7 @@ impl App {
             }
             AppActions::Clear => self.player.clear_tracks(),
             AppActions::Remove(index) => match self.player.remove_track(index) {
-                Ok(song_name) => self.log_info(format!("Removed {}", song_name)),
+                Ok(log_info) => self.log_info(log_info),
                 Err(err) => self.log_info(err),
             },
             AppActions::Utility(utility) => match utility {

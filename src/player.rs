@@ -8,7 +8,7 @@ pub struct Player {
     current_song: u32,
     sink: Sink,
     _output_stream: OutputStream,
-    pub communicater: Sender<PlayerAction>,
+    communicater: Sender<PlayerAction>,
 }
 
 #[derive(Debug)]
@@ -32,20 +32,23 @@ impl Player {
 
         let sink = Sink::try_new(&output_stream_handle).unwrap();
 
-        let player = Self {
+        Self {
             queue,
             current_song: 0,
             _output_stream,
             sink,
             communicater: sender,
-        };
-        player
+        }
     }
 
     pub fn add_track(&mut self, song: Song) -> Result<u32, PlayerError> {
         self.queue.push(song);
         if self.sink.empty() {
-            self.play(true)?;
+            if self.current_song != 0 {
+                return self.next_track();
+            } else {
+                return self.play(true);
+            }
         }
         Ok(self.queue.len() as u32)
     }
@@ -55,12 +58,32 @@ impl Player {
     }
 
     pub fn remove_track(&mut self, song_id: usize) -> Result<String, PlayerError> {
-        if self.queue.len() > song_id - 1 {
-            let removed_song = self.queue.remove(song_id - 1);
-            Ok(removed_song.song_name)
-        } else {
-            Err(PlayerError::IndexOutOfBounds)
+        if song_id == 0 || song_id > self.queue.len() {
+            return Err(PlayerError::IndexOutOfBounds);
         }
+
+        let removed_song = self.queue.remove(song_id - 1);
+
+        if self.queue.is_empty() {
+            self.sink.clear();
+            return Ok(format!(
+                "Removed {} from queue! It's Empty Now!",
+                removed_song.song_name
+            ));
+        }
+
+        if self.current_song as usize > song_id - 1 {
+            self.current_song -= 1;
+        }
+
+        self.play(true).map(|index| {
+            format!(
+                "Removed {}, Now Playing {} @ {}",
+                removed_song.song_name,
+                self.current_song_name(),
+                index
+            )
+        })
     }
 
     pub fn add_playlist(&mut self, mut playlist: Playlist) -> Result<u32, PlayerError> {
@@ -76,14 +99,24 @@ impl Player {
             return Err(PlayerError::EmptyQueue);
         }
         if forced {
-            let song = self.queue.iter().nth(self.current_song as usize).unwrap();
+            let song = self.queue.get(self.current_song as usize).unwrap();
             self.sink.clear();
             self.sink.append(song.get_source().unwrap());
             self.sink.play();
         } else {
             self.sink.play();
         }
-        return Ok(self.current_song);
+        Ok(self.current_song)
+    }
+
+    pub fn toggle_player(&self) -> String {
+        if self.sink.is_paused() {
+            self.sink.play();
+            "player resumed".to_string()
+        } else {
+            self.sink.pause();
+            "player paused".to_string()
+        }
     }
 
     pub fn next_track(&mut self) -> Result<u32, PlayerError> {
@@ -91,12 +124,6 @@ impl Player {
             Err(PlayerError::IndexOutOfBounds)
         } else {
             self.current_song += 1;
-            self.communicater
-                .send(PlayerAction::ConnectionMessage(format!(
-                    "{}",
-                    self.current_song
-                )))
-                .unwrap();
             self.play(true)?;
             Ok(self.current_song)
         }
@@ -107,7 +134,7 @@ impl Player {
     }
 
     pub fn jump_track(&mut self, index: usize) -> Result<u32, PlayerError> {
-        if index as usize >= self.queue.len() {
+        if index >= self.queue.len() {
             return Err(PlayerError::IndexOutOfBounds);
         }
         self.current_song = index as u32;
@@ -118,7 +145,7 @@ impl Player {
         if index >= self.queue.len() {
             Err(PlayerError::IndexOutOfBounds)
         } else {
-            let song = self.queue.iter().nth(index).unwrap();
+            let song = self.queue.get(index).unwrap();
             Ok(song.song_name.clone())
         }
     }
@@ -135,8 +162,19 @@ impl Player {
         self.current_song
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn current_song_name(&self) -> String {
+        self.queue
+            .get(self.current_song as usize)
+            .unwrap()
+            .song_name
+            .clone()
+    }
+
+    pub fn is_sink_empty(&self) -> bool {
         self.sink.empty()
     }
-}
 
+    pub fn is_last(&self) -> bool {
+        (self.current_song) as usize == self.queue.len()
+    }
+}

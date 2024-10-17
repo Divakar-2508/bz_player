@@ -1,10 +1,10 @@
 use std::io;
 
-mod player;
-mod ui;
-mod song_base;
 mod error;
+mod player;
 mod song;
+mod song_base;
+mod ui;
 mod utility;
 
 fn main() -> io::Result<()> {
@@ -13,4 +13,3 @@ fn main() -> io::Result<()> {
     ui::restore()?;
     app_result
 }
-

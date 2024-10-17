@@ -10,7 +10,7 @@ use crate::error::SongError;
 
 #[derive(Debug)]
 pub enum Playable {
-    SongByName(String),
+    SongByName(Vec<String>),
     SongById(Vec<u32>),
     Playlist(u8),
     None,

@@ -10,7 +10,7 @@ use crate::{
     player::PlayerAction,
     song::{Playlist, Song},
 };
-use rusqlite::{Connection, Error as rusqliteError, ErrorCode, Row};
+use rusqlite::{Connection, Error as rusqliteError, ErrorCode};
 
 pub struct SongBase {
     conn: Arc<Mutex<Connection>>,
@@ -20,7 +20,6 @@ pub struct SongBase {
 impl SongBase {
     const INSERT_SONG_QUERY: &'static str =
         "INSERT INTO songs (song_name, song_path) VALUES (?1, ?2)";
-    const PLAYLIST_SONG_REL_QUERY: &'static str = "INSERT INTO song_playlist_";
     pub fn init(db_name: &str, sender: Sender<PlayerAction>) -> Result<Self, SongBaseError> {
         let conn = Connection::open(db_name).map_err(|err| {
             if err.sqlite_error_code() == Some(ErrorCode::CannotOpen) {
@@ -148,12 +147,9 @@ impl SongBase {
                     .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
                 let mut query_result = query_statement
                     .query([song_name, song_path])
-                    .map_err(|err| SongBaseError::from(err))?;
+                    .map_err(SongBaseError::from)?;
 
-                let song_row = query_result
-                    .next()
-                    .map_err(|err| SongBaseError::from(err))?
-                    .unwrap();
+                let song_row = query_result.next().map_err(SongBaseError::from)?.unwrap();
 
                 Ok(song_row.get("song_id").unwrap())
             }
@@ -168,7 +164,7 @@ impl SongBase {
         let pattern = format!("%{}%", song_name);
 
         let mut prepared_statement = connection
-            .prepare(&search_query)
+            .prepare(search_query)
             .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
 
         let query_result = prepared_statement
@@ -192,7 +188,7 @@ impl SongBase {
         let connection = self.conn.lock().unwrap();
         let mut playlist_create_query = connection
             .prepare("INSERT INTO playlists (playlist_name) VALUES (?1) RETURNING playlist_id")
-            .map_err(|err| SongBaseError::from(err))?;
+            .map_err(SongBaseError::from)?;
 
         playlist_create_query
             .query_row([playlist_name], |row| row.get("playlist_id"))
@@ -212,7 +208,7 @@ impl SongBase {
     ) -> Result<(), SongBaseError> {
         let playlist_id = self.create_playlist(playlist_name)?;
         let mut conn = self.conn.lock().unwrap();
-        let mut conn = conn.deref_mut();
+        let conn = conn.deref_mut();
         let song_ids: Vec<u32> = folder_name
             .read_dir()
             .map_err(|_| SongBaseError::AccessFailed)?
@@ -226,7 +222,7 @@ impl SongBase {
                     )))
                     .unwrap();
                 Self::create_song(
-                    &mut conn,
+                    conn,
                     song.file_name().to_string_lossy().deref(),
                     song.path().to_string_lossy().deref(),
                 )
@@ -242,7 +238,7 @@ impl SongBase {
 
         let mut playlist_name_query = conn
             .prepare("SELECT playlist_id, playlist_name FROM playlists")
-            .map_err(|err| SongBaseError::from(err))?;
+            .map_err(SongBaseError::from)?;
 
         let query_result = playlist_name_query
             .query_map([], |row| {
@@ -251,7 +247,7 @@ impl SongBase {
 
                 Ok((playlist_id, playlist_name))
             })
-            .map_err(|err| SongBaseError::from(err))?;
+            .map_err(SongBaseError::from)?;
 
         Ok(query_result.filter_map(|row| row.ok()).collect())
     }
@@ -263,7 +259,7 @@ impl SongBase {
         WHERE playlist_id = ?1";
 
         let playlist_name: String = connection
-            .query_row(&playlist_name_query, [playlist_id], |row| {
+            .query_row(playlist_name_query, [playlist_id], |row| {
                 row.get("playlist_name")
             })
             .map_err(|err| {
@@ -285,16 +281,15 @@ impl SongBase {
 
         let song_ids = playlist_songs_query
             .query_map([playlist_id], |row| row.get("song_id"))
-            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?;
+            .map_err(|err| SongBaseError::DatabaseError(err.to_string()))?
+            .flatten();
 
         for song_id in song_ids {
-            if let Ok(song_id) = song_id {
-                match self.find_song_by_id(song_id) {
-                    Ok(song) => playlist.add_song(song),
-                    _ => continue,
-                }
+            if let Ok(song) = self.find_song_by_id(song_id) {
+                playlist.add_song(song);
             }
         }
+
         self.sender
             .send(PlayerAction::ConnectionMessage(playlist_name))
             .unwrap();
@@ -313,15 +308,13 @@ impl SongBase {
             (?1, ?2)";
 
         for id in song_ids {
-            match connection.execute(&playlist_song_add_query, [id, playlist_id as u32]) {
-                Err(err) => {
-                    if err.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
-                        continue;
-                    } else {
-                        return Err(SongBaseError::DatabaseError(err.to_string()));
-                    }
+            if let Err(err) = connection.execute(playlist_song_add_query, [id, playlist_id as u32])
+            {
+                if err.sqlite_error_code() == Some(ErrorCode::ConstraintViolation) {
+                    continue;
+                } else {
+                    return Err(SongBaseError::DatabaseError(err.to_string()));
                 }
-                _ => (),
             }
         }
 
@@ -338,14 +331,14 @@ impl SongBase {
         };
 
         if !path.exists() {
-            return Err(SongBaseError::InvalidPath);
+            Err(SongBaseError::InvalidPath)
         } else {
             let connection = Arc::clone(&self.conn);
             let sender_clone = self.sender.clone();
             let path_clone = path.clone();
 
             thread::spawn(move || Self::fetch_songs(path_clone, &connection, &sender_clone));
-            return Ok(format!("{}", path.to_string_lossy()));
+            Ok(format!("{}", path.to_string_lossy()))
         }
     }
 
@@ -370,7 +363,7 @@ impl SongBase {
                 let dir_name = entry_path.file_name();
                 match dir_name {
                     Some(dir_name) if dir_name != "node_modules" || dir_name != "target" => {
-                        let connection = Arc::clone(&conn);
+                        let connection = Arc::clone(conn);
                         Self::fetch_songs(entry_path, &connection, sender);
                     }
                     _ => continue,
@@ -395,7 +388,7 @@ impl SongBase {
                         if let Some(ErrorCode::ConstraintViolation) = err.sqlite_error_code() {
                             continue;
                         } else {
-                            let message = format!("Database error: {}", err.to_string());
+                            let message = format!("Database error: {}", err);
                             sender
                                 .send(PlayerAction::ConnectionMessage(message))
                                 .map_err(|_| {})

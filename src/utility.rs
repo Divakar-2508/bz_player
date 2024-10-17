@@ -93,3 +93,7 @@ pub fn render_playlist_view(rect: Rect, buf: &mut Buffer, playlist_names: &Vec<(
 
     para.render(rect, buf);
 }
+
+pub fn render_utility_home(rect: Rect, buf: &mut Buffer) {
+    let block = render_block("Utility Zone");
+}
